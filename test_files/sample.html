@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+    <style>
+        body {
+            background-color: #f0f0f0;
+            font-family: Arial;
+        }
+        .header {
+            color: blue;
+            font-size: 24px;
+            border: 2px solid black;
+            padding: 10px;
+            margin: 10px;
+            width: 500px;
+        }
+        .content {
+            color: green;
+            margin: 15px;
+            padding: 10px;
+            border: 1px dashed gray;
+            width: 500px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">Welcome to Mini Browser</div>
+    <div class="content">
+        This is a simple test page for our mini browser.
+        <p>It supports basic HTML and CSS.</p>
+    </div>
+    <script>
+        document.getElementById("demo").innerHTML = "Hello JavaScript!";
+    </script>
+    <div id="demo"></div>
+</body>
+</html>
