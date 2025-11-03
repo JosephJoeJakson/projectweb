@@ -1,4 +1,4 @@
-# Step 5 — Layout (hérité de S4) : moteur de layout identique à l'étape 4
+# Step 6 — Layout (hérité de S4/S5) : on garde le moteur de layout identique
 from math import ceil
 
 def _px(v, default=0.0):

@@ -1,4 +1,4 @@
-# Step 4 — Parseur HTML (repris de S2/S3) : DOM + récupération d'erreurs basiques
+# Step 6 — Parseur HTML (hérité de S2/S3) : DOM + récupération d'erreurs basiques
 from html.parser import HTMLParser as _HTMLParser
 
 class DOMNode:

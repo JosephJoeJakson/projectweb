@@ -1,80 +1,55 @@
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import os, json
-from html_parser import parse_html, dom_to_string
-from css_parser import CSSParser
+# Step 4 — Layout Engine : box model, block/inline, position: static/relative/absolute
+# Usage:
+#   python browser.py path/to/file.html [path/to/file.css]
+#
+# Affiche un arbre de layout (x,y,w,h) avec marges/paddings/bordures et positions.
+# Cette étape ne dessine rien (le rendu viendra en S5).
+
+import sys
+from tkinter import Tk, filedialog
+from html_parser import parse_html
+from css_parser import CSSParser, apply_css_to_dom
 from layout import build_layout_tree, layout_to_string
 
-class Browser:
-    def __init__(self, root):
-        self.root = root; self.root.title("Mini Browser – Step 4 (Layout)")
-        self.dom = None; self.css = CSSParser()
+def pick_file(title, patterns):
+    Tk().withdraw()
+    return filedialog.askopenfilename(title=title, filetypes=patterns)
 
-        top = tk.Frame(root); top.pack(side=tk.TOP, fill=tk.X)
-        self.url_entry = tk.Entry(top); self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=4)
-        self.url_entry.bind("<Return>", self.load_url)
-        tk.Button(top, text="Load", command=self.load_url).pack(side=tk.LEFT, padx=4, pady=4)
+def main():
+    if len(sys.argv) >= 2:
+        html_path = sys.argv[1]
+    else:
+        html_path = pick_file("Choisir un fichier HTML", [("Fichiers HTML","*.html;*.htm"), ("Tous","*.*")])
+        if not html_path:
+            print("Aucun fichier HTML choisi."); return
 
-        self.source_text = tk.Text(root, height=18); self.source_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        self.canvas = tk.Canvas(root, bg="white"); self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+    css_path = sys.argv[2] if len(sys.argv) >= 3 else pick_file("Choisir un fichier CSS (facultatif)", [("Fichiers CSS","*.css"), ("Tous","*.*")])
 
-    def _walk(self, n):
-        if not n: return
-        yield n
-        for c in n.children: yield from self._walk(c)
+    html = open(html_path, "r", encoding="utf-8", errors="ignore").read()
+    dom_root, errors = parse_html(html)
 
-    def _apply_css(self, node, rules):
-        node.styles = node.styles or {}
-        for r in rules:
-            sels = list(r.get("selectors", []) or [])
-            if not sels and "selector" in r: sels = [r["selector"]]
-            for sel in sels:
-                if self._match(node, sel): node.styles.update(r.get("style", {}))
-        for c in node.children: self._apply_css(c, rules)
+    css = ""
+    if css_path:
+        css = open(css_path, "r", encoding="utf-8", errors="ignore").read()
 
-    def _match(self, node, sel):
-        sel = (sel or "").strip()
-        if not sel: return False
-        tag = node.tag.lower(); attrs = node.attributes
-        if sel.startswith("."): return sel[1:] in (attrs.get("class") or "").split()
-        if sel.startswith("#"): return attrs.get("id") == sel[1:]
-        return tag == sel.lower()
+    parser = CSSParser()
+    rules = parser.parse_css(css)
+    apply_css_to_dom(dom_root, rules)
 
-    def load_url(self, event=None):
-        url = self.url_entry.get().strip()
-        if not url:
-            path = filedialog.askopenfilename(title="Open HTML", filetypes=(("HTML","*.html;*.htm"),("All","*.*")))
-            if not path: return
-            url = path; self.url_entry.delete(0, tk.END); self.url_entry.insert(0, path)
-        if not os.path.exists(url):
-            messagebox.showerror("Error", f"File not found:\n{url}"); return
+    layout_root = build_layout_tree(dom_root, viewport_width=800)
 
-        with open(url, "r", encoding="utf-8") as f:
-            html = f.read()
-        self.dom = parse_html(html)
-        self.css.rules = []
+    print("=== LAYOUT (positions & tailles) ===")
+    print(layout_to_string(layout_root))
 
-        base = os.path.dirname(os.path.abspath(url))
-        for n in list(self._walk(self.dom)):
-            if n.tag.lower() == "style" and n.text.strip():
-                self.css.parse_css(n.text)
-            if n.tag.lower() == "link" and (n.attributes.get("rel") or "").lower()=="stylesheet":
-                href = (n.attributes.get("href") or "").strip()
-                if href:
-                    path = href if os.path.isabs(href) else os.path.join(base, href)
-                    if os.path.exists(path):
-                        with open(path, "r", encoding="utf-8") as f:
-                            self.css.parse_css(f.read())
+    out = html_path + ".layout.txt"
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(layout_to_string(layout_root))
+    print(f"\nLayout sauvegardé → {out}")
 
-        self._apply_css(self.dom, self.css.rules)
-        layout_root = build_layout_tree(self.dom, viewport_width=800)
-
-        self.source_text.delete("1.0", tk.END)
-        self.source_text.insert(tk.END, html + "\n\n----- DOM -----\n" + dom_to_string(self.dom))
-        self.source_text.insert(tk.END, "\n\n----- CSSOM -----\n" + json.dumps(self.css.rules, indent=2))
-        self.source_text.insert(tk.END, "\n\n----- LAYOUT -----\n" + layout_to_string(layout_root))
-        self.canvas.delete("all")  # painting in Step 5
+    if errors:
+        print("\n=== Avertissements parsing HTML ===")
+        for e in errors:
+            print("-", e)
 
 if __name__ == "__main__":
-    root = tk.Tk(); root.geometry("900x700")
-    Browser(root); root.mainloop()
+    main()

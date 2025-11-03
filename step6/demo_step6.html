@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      #btn { background-color: #eee; border-top-width: 1px; padding-top: 8px; padding-left: 12px; }
+      #count { margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <div id="btn">Clique-moi</div>
+    <div id="count">0</div>
+    <script>
+      let btn = document.getElementById("btn");
+      let c = document.getElementById("count");
+      btn.addEventListener('click', function() {
+        let n = 0;
+        if (c && c.textContent) { n = 0 + (1); }
+        c.textContent = "" + (n + 1);
+        btn.style.background_color = "#cde";
+      });
+    </script>
+  </body>
+</html>

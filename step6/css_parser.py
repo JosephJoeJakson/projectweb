@@ -1,4 +1,4 @@
-# Step 5 — Parser CSS (hérité de S3) + application au DOM (spécificité)
+# Step 6 — Parser CSS (hérité de S3) + application au DOM (spécificité)
 import re
 
 def _strip_comments(s: str) -> str:

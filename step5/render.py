@@ -1,120 +1,219 @@
+
+# Step 5 — Rendering Tkinter: backgrounds, borders, text + simple z-index
+import sys
 import tkinter as tk
 from tkinter.font import Font
+from typing import Any, List, Tuple
 
-def render_layout(canvas: tk.Canvas, dom_root, css_rules):
-    canvas.delete("all")
-    if dom_root is None: return
-    _apply_css(dom_root, css_rules)
+from html_parser import parse_html
+from css_parser import CSSParser, apply_css_to_dom
+from layout import build_layout_tree
 
-    try:
-        w = max(800, int(canvas.winfo_width()))
-        h = max(600, int(canvas.winfo_height()))
-    except Exception:
-        w, h = 800, 600
-
-    canvas.create_rectangle(0,0,w,h, fill="white", outline="")
-    _paint_node(canvas, dom_root, x=10, y=10, max_width=w-20)
-
-def _apply_css(node, rules):
-    node.styles = node.styles or {}
-    for r in rules or []:
-        sels = list(r.get("selectors", []) or [])
-        if not sels and "selector" in r: sels = [r["selector"]]
-        for s in sels:
-            if _match(node, s): node.styles.update(r.get("style", {}))
-    for c in getattr(node, "children", []): _apply_css(c, rules)
-
-def _match(node, sel):
-    sel = (sel or "").strip()
-    if not sel: return False
-    tag = node.tag.lower(); attrs = node.attributes
-    if sel.startswith("."): return sel[1:] in (attrs.get("class") or "").split()
-    if sel.startswith("#"): return attrs.get("id") == sel[1:]
-    return tag == sel.lower()
-
+# ---------- Style helpers ----------
 def _get(node, name, default=None):
-    return (node.styles or {}).get(name, default)
+    try:
+        return (node.styles or {}).get(name, default)
+    except Exception:
+        return default
 
 def _px(v, default=0.0):
     if v is None: return float(default)
-    if isinstance(v,(int,float)): return float(v)
+    if isinstance(v, (int, float)): return float(v)
     s = str(v).strip()
     if s.endswith("px"): s = s[:-2]
     try: return float(s)
     except: return float(default)
 
 def _color(v, default=None):
-    if v in (None,"","transparent"): return default
-    return str(v)
+    if not v: return default
+    s = str(v).strip()
+    # Accept e.g. "#rrggbb" or color names; Tkinter will resolve common names.
+    return s
 
 def _font_for(node):
-    size = int(_px(_get(node,"font-size",14),14))
-    fam = _get(node,"font-family","Arial")
-    try: return Font(name=None, exists=False, family=fam, size=size)
-    except: return Font(name=None, exists=False, family="Arial", size=size)
+    fam = _get(node, "font-family", "TkDefaultFont")
+    size = int(_px(_get(node, "font-size", 12), 12))
+    weight = "bold" if str(_get(node, "font-weight", "")).lower() in ("bold","700","800","900") else "normal"
+    slant = "italic" if str(_get(node, "font-style", "")).lower() == "italic" else "roman"
+    return (fam, size, weight)
 
-def _measure(canvas, text, font, max_w):
-    item = canvas.create_text(0,0, anchor="nw", text=text, font=font, state="hidden")
-    bbox = canvas.bbox(item); canvas.delete(item)
-    w = (bbox[2]-bbox[0]) if bbox else 0
-    return w
+# ---------- Render primitives ----------
+def _draw_background(canvas: tk.Canvas, box) -> None:
+    st = getattr(box.node, "styles", {}) or {}
+    bg = _color(st.get("background-color"))
+    if not bg: return
+    d = box.dims
+    # Paint to the padding-box (CSS default)
+    x0 = box.x - d.padding_left - d.border_left
+    y0 = box.y - d.padding_top - d.border_top
+    x1 = box.x + box.w + d.padding_right + d.border_right - (d.padding_left + d.border_left)
+    y1 = box.y + box.h + d.padding_bottom + d.border_bottom - (d.padding_top + d.border_top)
+    canvas.create_rectangle(x0, y0, x1, y1, outline="", fill=bg)
 
-def _wrap(canvas, text, font, max_w):
-    words = (text or "").split()
-    if not words: return []
-    lines=[]; cur=""
-    for w in words:
-        t = (cur+" "+w).strip()
-        if _measure(canvas, t, font, max_w) <= max_w or not cur:
-            cur = t
-        else:
-            lines.append(cur); cur=w
-    if cur: lines.append(cur)
-    return lines
+def _draw_borders(canvas: tk.Canvas, box) -> None:
+    st = getattr(box.node, "styles", {}) or {}
+    d = box.dims
 
-def _paint_node(canvas, node, x, y, max_width):
-    tag = node.tag.lower()
-    if tag in ("head","style","script"): return y
+    # Colors
+    col = _color(st.get("border-color"), "#000")
+    col_top    = _color(st.get("border-top-color"), col)
+    col_right  = _color(st.get("border-right-color"), col)
+    col_bottom = _color(st.get("border-bottom-color"), col)
+    col_left   = _color(st.get("border-left-color"), col)
 
-    m_t=_px(_get(node,"margin-top",0)); m_b=_px(_get(node,"margin-bottom",8))
-    m_l=_px(_get(node,"margin-left",0)); m_r=_px(_get(node,"margin-right",0))
-    p_t=_px(_get(node,"padding-top",4)); p_b=_px(_get(node,"padding-bottom",4))
-    p_l=_px(_get(node,"padding-left",6)); p_r=_px(_get(node,"padding-right",6))
-    bw=_px(_get(node,"border-width",0))
-    bcol=_color(_get(node,"border-color","#000"),"#000")
-    bg=_color(_get(node,"background-color",None),None)
+    # Widths
+    wt = _px(st.get("border-top-width"), d.border_top or 0)
+    wr = _px(st.get("border-right-width"), d.border_right or 0)
+    wb = _px(st.get("border-bottom-width"), d.border_bottom or 0)
+    wl = _px(st.get("border-left-width"), d.border_left or 0)
 
-    declared = _get(node,"width",None)
-    if declared is not None:
-        content_w = max(0.0, _px(declared))
-        total_w = content_w + p_l + p_r + 2*bw
-    else:
-        total_w = max(0.0, max_width - m_l - m_r)
-        content_w = max(0.0, total_w - p_l - p_r - 2*bw)
+    x = box.x
+    y = box.y
+    w = box.w
+    h = box.h
 
-    cur_x = x + m_l; cur_y = y + m_t
+    # Top
+    if wt > 0:
+        canvas.create_rectangle(x - wl, y - wt, x + w + wr, y, outline="", fill=col_top)
+    # Bottom
+    if wb > 0:
+        canvas.create_rectangle(x - wl, y + h, x + w + wr, y + h + wb, outline="", fill=col_bottom)
+    # Left
+    if wl > 0:
+        canvas.create_rectangle(x - wl, y - wt, x, y + h + wb, outline="", fill=col_left)
+    # Right
+    if wr > 0:
+        canvas.create_rectangle(x + w, y - wt, x + w + wr, y + h + wb, outline="", fill=col_right)
 
-    text = (node.text or "").strip()
-    font = _font_for(node)
-    line_h = int(font.metrics("linespace") or 16)
-    lines = _wrap(canvas, text, font, content_w)
-    text_h = line_h * len(lines)
+def _content_box_xy(box):
+    d = box.dims
+    return (box.x, box.y)
 
-    # background & border
-    x1,y1 = cur_x, cur_y
-    x2,y2 = cur_x + total_w, cur_y + (p_t + text_h + p_b + 2*bw)
-    if bg: canvas.create_rectangle(x1,y1,x2,y2, fill=bg, outline="")
-    if bw>0: canvas.create_rectangle(x1,y1,x2,y2, outline=bcol, width=bw)
+def _content_box_wh(box):
+    d = box.dims
+    return (box.w, box.h)
 
-    # draw text
-    ty = cur_y + bw + p_t
-    for line in lines:
-        canvas.create_text(cur_x + bw + p_l, ty, anchor="nw", font=font, fill=_color(_get(node,"color","black"),"black"), text=line)
-        ty += line_h
+def _draw_text(canvas: tk.Canvas, box) -> None:
+    node = box.node
+    text = (getattr(node, "text", "") or "").strip()
+    if not text: return
 
-    # children
-    child_y = cur_y + bw + p_t + text_h
-    for c in node.children:
-        child_y = _paint_node(canvas, c, x=cur_x + bw + p_l, y=child_y, max_width=content_w)
+    x, y = _content_box_xy(box)
+    w, h = _content_box_wh(box)
 
-    return y2 + m_b
+    fill = _color(_get(node, "color"), "#000")
+    font_tuple = _font_for(node)
+
+    # Use wraplength so long lines don’t overflow; it is in pixels.
+    canvas.create_text(x, y, anchor="nw", text=text, fill=fill, font=font_tuple, width=max(1, int(w)))
+
+# ---------- Tree traversal & z-index ----------
+def _flatten(box, out, order=[0]):
+    if box is None: return
+    order[0] += 1
+    z = 0
+    try:
+        z = int(float((box.node.styles or {}).get("z-index", 0)))
+    except Exception:
+        z = 0
+    out.append((z, order[0], box))
+    for c in getattr(box, "children", []) or []:
+        _flatten(c, out, order)
+
+def render_layout(canvas: tk.Canvas, layout_root) -> None:
+    if layout_root is None: return
+    canvas.delete("all")
+
+    flat: List[Tuple[int,int,Any]] = []
+    _flatten(layout_root, flat)
+    # Sort by z-index then document order
+    flat.sort(key=lambda t: (t[0], t[1]))
+
+    # First pass: backgrounds
+    for _, _, b in flat:
+        _draw_background(canvas, b)
+    # Second: borders
+    for _, _, b in flat:
+        _draw_borders(canvas, b)
+    # Third: text
+    for _, _, b in flat:
+        _draw_text(canvas, b)
+
+# ---------- Demo / Tkinter integration ----------
+class App:
+    def __init__(self, html_path=None, css_path=None, viewport=(900, 700)):
+        self.root = tk.Tk()
+        self.root.title("Mini‑browser — Step 5 Rendering")
+        self.canvas = tk.Canvas(self.root, width=viewport[0], height=viewport[1], bg="white")
+        self.canvas.pack(fill="both", expand=True)
+
+        # Load files (optional pickers if not provided)
+        if not html_path:
+            from tkinter.filedialog import askopenfilename
+            html_path = askopenfilename(title="Choisir un fichier HTML", filetypes=[("HTML","*.html;*.htm"),("All","*.*")])
+        css_text = ""
+        if not css_path:
+            # optional
+            pass
+
+        html_text = ""
+        if html_path:
+            with open(html_path, "r", encoding="utf-8") as f:
+                html_text = f.read()
+        if css_path:
+            with open(css_path, "r", encoding="utf-8") as f:
+                css_text = f.read()
+
+        dom, _ = parse_html(html_text)
+
+        # Apply CSS: file rules + inline style="..."
+        parser = CSSParser()
+        rules = parser.parse_css(css_text or "")
+        apply_css_to_dom(dom, rules)
+        self._merge_inline_styles(dom)
+
+        # Compute layout (viewport width = current canvas width)
+        vw = int(self.canvas.winfo_reqwidth() or 900)
+        self.layout_root = build_layout_tree(dom, viewport_width=vw)
+
+        # Initial render
+        render_layout(self.canvas, self.layout_root)
+
+        # Re-render on resize
+        self.canvas.bind("<Configure>", self._on_resize)
+
+    def _on_resize(self, event):
+        # Recompute layout with new viewport width, then repaint
+        w = max(200, int(event.width))
+        # (Height is not required by our layout; we let content define scrollregion)
+        # Rebuild DOM/styles? Keep same DOM, recompute layout:
+        # For simplicity we don't re-parse; build_layout_tree is pure from DOM+styles.
+        self.layout_root = build_layout_tree(self.layout_root.node, viewport_width=w)
+        # Update scroll region to content bbox
+        self.canvas.config(scrollregion=(0,0,max(w, int(self.layout_root.w + 40)), int(self.layout_root.h + 80)))
+        render_layout(self.canvas, self.layout_root)
+
+    def _merge_inline_styles(self, node):
+        # Parse inline style="a:b; c:d" onto node.styles
+        try:
+            attrs = getattr(node, "attributes", {}) or {}
+            style_attr = attrs.get("style")
+            if style_attr:
+                if node.styles is None:
+                    node.styles = {}
+                for p in style_attr.split(";"):
+                    if ":" in p:
+                        k, v = p.split(":", 1)
+                        node.styles[k.strip()] = v.strip()
+        except Exception:
+            pass
+        for c in getattr(node, "children", []) or []:
+            self._merge_inline_styles(c)
+
+def main():
+    html = sys.argv[1] if len(sys.argv) >= 2 else None
+    css  = sys.argv[2] if len(sys.argv) >= 3 else None
+    App(html, css).root.mainloop()
+
+if __name__ == "__main__":
+    main()
